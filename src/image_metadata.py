@@ -25,7 +25,19 @@ def extract_image_metadata(file_path):
 
     grey_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     brightness = float(grey_image.mean())
+    if brightness < 40:
+        brightness_warning = "Warning: The image is very dark."
+    elif brightness > 200:
+        brightness_warning = "Warning: The image is very bright."
+    else:
+        brightness_warning = "Normal"   
+        
     blur_score = float(cv2.Laplacian(grey_image, cv2.CV_64F).var())
+
+    if blur_score < 100:
+        blur_warning = "Warning: The image is blurry."
+    else:
+        blur_warning = "Normal"
 
     return {
         "file_path": file_path,
@@ -37,6 +49,8 @@ def extract_image_metadata(file_path):
         "sha256": file_hash,
         "brightness": brightness,
         "blur_score": blur_score,
+        "brightness_warning": brightness_warning,
+        "blur_warning": blur_warning,
     }
 
 
@@ -67,6 +81,8 @@ if all_metadata:
     "sha256",
     "brightness",
     "blur_score",
+    "brightness_warning",
+    "blur_warning"
 ]
     with open("data/processed/image_metadata.csv", "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction="ignore")
