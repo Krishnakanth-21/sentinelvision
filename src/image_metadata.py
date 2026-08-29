@@ -18,6 +18,10 @@ def extract_image_metadata(file_path):
     file_size_bytes = os.path.getsize(file_path)
     file_hash = get_sha256(file_path)
 
+    grey_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    brightness = float(grey_image.mean())
+    blur_score = float(cv2.Laplacian(grey_image, cv2.CV_64F).var())
+
     return {
         "file_path": file_path,
         "width": width,
@@ -25,6 +29,8 @@ def extract_image_metadata(file_path):
         "channels": channels,
         "file_size_bytes": file_size_bytes,
         "sha256": file_hash,
+        "brightness": brightness,
+        "blur_score": blur_score,
     }
 
 
@@ -32,4 +38,5 @@ image_path = "data/raw/images/river-wild-adventure-contrast.jpg"
 
 metadata = extract_image_metadata(image_path)
 
-print(metadata)
+for key, value in metadata.items():
+    print(f"{key}: {value}")
