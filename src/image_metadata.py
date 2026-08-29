@@ -1,6 +1,7 @@
 import os
 import hashlib
 import cv2
+import csv
 
 
 def get_sha256(file_path):
@@ -42,11 +43,21 @@ def extract_image_metadata(file_path):
 
 
 image_folder = "data/raw/images"
+all_metadata = []
 
 for filename in os.listdir(image_folder):
     file_path = os.path.join(image_folder, filename)
     metadata = extract_image_metadata(file_path)
+    all_metadata.append(metadata)
     print(f"\nMetadata for {filename}:")
     for key, value in metadata.items():
         print(f"  {key}: {value}")
 
+print(f"\nTotal images processed: {len(all_metadata)}")
+
+if all_metadata:
+    fieldnames = all_metadata[0].keys()
+    with open("data/processed/image_metadata.csv", "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_metadata)

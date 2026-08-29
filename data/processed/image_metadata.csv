@@ -1,0 +1,2 @@
+file_path,is_corrupted,width,height,channels,file_size_bytes,sha256,brightness,blur_score
+data/raw/images/river-wild-adventure-contrast.jpg,False,910,1365,3,303231,74a10322a87175c88a256293849e51f29aab8c5a49e4b5b8e37102441d3ad5c3,59.73441613331723,6193.227928812028
