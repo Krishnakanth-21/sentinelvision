@@ -56,8 +56,19 @@ for filename in os.listdir(image_folder):
 print(f"\nTotal images processed: {len(all_metadata)}")
 
 if all_metadata:
-    fieldnames = all_metadata[0].keys()
+    fieldnames = [
+    "file_path",
+    "is_corrupted",
+    "error",
+    "width",
+    "height",
+    "channels",
+    "file_size_bytes",
+    "sha256",
+    "brightness",
+    "blur_score",
+]
     with open("data/processed/image_metadata.csv", "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(all_metadata)
