@@ -12,7 +12,11 @@ def extract_image_metadata(file_path):
     image = cv2.imread(file_path)
 
     if image is None:
-        return None
+        return {
+            "file_path": file_path,
+            "is_corrupted": True,
+            "error": "Failed to read image. The file may be corrupted or not an image.",
+        }
 
     height, width, channels = image.shape
     file_size_bytes = os.path.getsize(file_path)
@@ -24,6 +28,7 @@ def extract_image_metadata(file_path):
 
     return {
         "file_path": file_path,
+        "is_corrupted": False,
         "width": width,
         "height": height,
         "channels": channels,
@@ -34,9 +39,14 @@ def extract_image_metadata(file_path):
     }
 
 
-image_path = "data/raw/images/river-wild-adventure-contrast.jpg"
 
-metadata = extract_image_metadata(image_path)
 
-for key, value in metadata.items():
-    print(f"{key}: {value}")
+image_folder = "data/raw/images"
+
+for filename in os.listdir(image_folder):
+    file_path = os.path.join(image_folder, filename)
+    metadata = extract_image_metadata(file_path)
+    print(f"\nMetadata for {filename}:")
+    for key, value in metadata.items():
+        print(f"  {key}: {value}")
+
