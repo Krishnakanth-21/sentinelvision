@@ -55,8 +55,8 @@ print(f"Images with missing dimensions: {missing_dimensions}")
 
 # Check invalid image dimensions
 invalid_dimensions = (
-    (image_df["width"] <= 0) |
-    (image_df["height"] <= 0)
+    (image_df["width"] <= 0)
+    | (image_df["height"] <= 0)
 ).sum()
 
 print(f"Images with invalid dimensions: {invalid_dimensions}")
@@ -116,8 +116,8 @@ print(
 
 # Check invalid video dimensions
 invalid_video_dimensions = (
-    (video_df["width"] <= 0) |
-    (video_df["height"] <= 0)
+    (video_df["width"] <= 0)
+    | (video_df["height"] <= 0)
 ).sum()
 
 print(
@@ -128,8 +128,8 @@ print(
 
 # Check invalid FPS
 invalid_fps_count = (
-    video_df["fps"].isnull() |
-    (video_df["fps"] <= 0)
+    video_df["fps"].isnull()
+    | (video_df["fps"] <= 0)
 ).sum()
 
 print(f"Videos with invalid FPS: {invalid_fps_count}")
@@ -137,8 +137,8 @@ print(f"Videos with invalid FPS: {invalid_fps_count}")
 
 # Check invalid frame counts
 invalid_frame_count = (
-    video_df["frame_count"].isnull() |
-    (video_df["frame_count"] <= 0)
+    video_df["frame_count"].isnull()
+    | (video_df["frame_count"] <= 0)
 ).sum()
 
 print(f"Videos with invalid frame count: {invalid_frame_count}")
@@ -146,8 +146,8 @@ print(f"Videos with invalid frame count: {invalid_frame_count}")
 
 # Check invalid duration
 invalid_duration_count = (
-    video_df["duration_seconds"].isnull() |
-    (video_df["duration_seconds"] <= 0)
+    video_df["duration_seconds"].isnull()
+    | (video_df["duration_seconds"] <= 0)
 ).sum()
 
 print(f"Videos with invalid duration: {invalid_duration_count}")
@@ -168,10 +168,78 @@ print(f"Total video validation issues found: {total_video_issues}")
 
 
 # --------------------------------------------------
+# IMAGE LABEL VALIDATION
+# --------------------------------------------------
+
+image_labels_path = "data/labels/image_labels.csv"
+labels_df = pd.read_csv(image_labels_path)
+
+print("\nIMAGE LABEL VALIDATION")
+print("----------------------")
+
+print(f"Total labelled image records: {len(labels_df)}")
+
+
+# Check unknown labels
+unknown_label_count = (
+    labels_df["label"] == "unknown"
+).sum()
+
+print(f"Images with unknown labels: {unknown_label_count}")
+
+
+# Check missing labels
+missing_label_count = labels_df["label"].isnull().sum()
+
+print(f"Images with missing labels: {missing_label_count}")
+
+
+# Check duplicate label records
+duplicate_label_records = (
+    labels_df["file_path"]
+    .duplicated()
+    .sum()
+)
+
+print(f"Duplicate label records: {duplicate_label_records}")
+
+
+# Check whether every image has a label record
+unlabelled_images = (
+    ~image_df["file_path"].isin(labels_df["file_path"])
+).sum()
+
+print(f"Images without label records: {unlabelled_images}")
+
+
+# Display class distribution
+print("\nLabel distribution:")
+
+label_distribution = labels_df["label"].value_counts()
+
+print(label_distribution.to_string())
+
+
+# Calculate total label validation issues
+total_label_issues = (
+    unknown_label_count
+    + missing_label_count
+    + duplicate_label_records
+    + unlabelled_images
+)
+
+print(f"\nTotal label validation issues found: {total_label_issues}")
+
+
+# --------------------------------------------------
 # OVERALL DATASET SUMMARY
 # --------------------------------------------------
 
-total_dataset_issues = total_image_issues + total_video_issues
+total_dataset_issues = (
+    total_image_issues
+    + total_video_issues
+    + total_label_issues
+)
 
 print("\nOVERALL VALIDATION SUMMARY")
 print("--------------------------")
