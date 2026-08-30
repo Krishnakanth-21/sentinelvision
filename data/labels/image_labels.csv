@@ -1,8 +1,8 @@
 file_path,label
-data/raw/images/images.jpeg,unknown
-data/raw/images/portrait.jpg,person
-data/raw/images/photo-1493612276216-ee3925520721.avif,unknown
-data/raw/images/random.jpg,unknown
-data/raw/images/autumn-forest-Wallpaper-Nature-Forest-autumn-forest-leaves-....jpg,forest
-data/raw/images/river-wild-adventure-contrast.jpg,river
-data/raw/images/animal_facts-e1396431549968.jpg,animal
+data/staging/images/images.jpeg,unknown
+data/staging/images/portrait.jpg,person
+data/staging/images/photo-1493612276216-ee3925520721.avif,unknown
+data/staging/images/random.jpg,unknown
+data/staging/images/autumn-forest-Wallpaper-Nature-Forest-autumn-forest-leaves-....jpg,forest
+data/staging/images/river-wild-adventure-contrast.jpg,river
+data/staging/images/animal_facts-e1396431549968.jpg,animal
