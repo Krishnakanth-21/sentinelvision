@@ -1,0 +1,21 @@
+2026-08-30 10:58:41,484 | INFO | __main__ | Starting SentinelVision S3 storage workflow.
+2026-08-30 10:58:41,484 | INFO | __main__ | Bucket: sentinelvision-krishnakanth-2026 | Region: ap-southeast-2 | AWS profile: sentinelvision
+2026-08-30 10:58:41,484 | INFO | __main__ | Creating S3 client using AWS profile 'sentinelvision'.
+2026-08-30 10:58:41,501 | INFO | botocore.credentials | Found credentials in shared credentials file: ~/.aws/credentials
+2026-08-30 10:58:41,609 | INFO | __main__ | S3 client created successfully.
+2026-08-30 10:58:41,609 | INFO | __main__ | Starting processed metadata upload.
+2026-08-30 10:58:41,609 | INFO | __main__ | Uploading data/processed/image_metadata.csv to s3://sentinelvision-krishnakanth-2026/metadata/image_metadata.csv
+2026-08-30 10:58:41,774 | INFO | __main__ | Upload completed successfully: metadata/image_metadata.csv
+2026-08-30 10:58:41,774 | INFO | __main__ | Uploading data/processed/video_metadata.csv to s3://sentinelvision-krishnakanth-2026/metadata/video_metadata.csv
+2026-08-30 10:58:41,829 | INFO | __main__ | Upload completed successfully: metadata/video_metadata.csv
+2026-08-30 10:58:41,829 | INFO | __main__ | All processed metadata files uploaded successfully.
+2026-08-30 10:58:41,829 | INFO | __main__ | Verifying uploaded metadata.
+2026-08-30 10:58:41,830 | INFO | __main__ | Checking S3 object: s3://sentinelvision-krishnakanth-2026/metadata/image_metadata.csv
+2026-08-30 10:58:41,866 | INFO | __main__ | S3 object exists: metadata/image_metadata.csv
+2026-08-30 10:58:41,867 | INFO | __main__ | Checking S3 object: s3://sentinelvision-krishnakanth-2026/metadata/video_metadata.csv
+2026-08-30 10:58:41,897 | INFO | __main__ | S3 object exists: metadata/video_metadata.csv
+2026-08-30 10:58:41,897 | INFO | __main__ | Listing objects under s3://sentinelvision-krishnakanth-2026/metadata/
+2026-08-30 10:58:41,929 | INFO | __main__ | Found 2 object(s) under prefix 'metadata/'.
+2026-08-30 10:58:41,929 | INFO | __main__ | S3 object: metadata/image_metadata.csv | Size: 1459 bytes
+2026-08-30 10:58:41,929 | INFO | __main__ | S3 object: metadata/video_metadata.csv | Size: 379 bytes
+2026-08-30 10:58:41,929 | INFO | __main__ | S3 storage workflow status: PASS
