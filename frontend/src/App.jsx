@@ -6,12 +6,39 @@ import "./App.css";
 // API configuration
 // ===========================================================================
 
-// SentinelVision FastAPI backend.
+// SentinelVision AWS serverless backend.
 //
-// During local development:
-// React / Vite -> http://localhost:5173
-// FastAPI      -> http://127.0.0.1:8000
-const API_BASE_URL = "http://127.0.0.1:8000";
+// Production:
+// React / Vercel
+//      ↓
+// API Gateway
+//      ↓
+// Lambda
+//      ↓
+// Presigned URL
+//      ↓
+// Amazon S3
+//
+// VITE_API_BASE_URL can override the default endpoint when required.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "https://h65jn9tkr5.execute-api.ap-southeast-2.amazonaws.com";
+
+
+// Browser-local dataset history.
+//
+// This is temporary application state.
+// A persistent AWS metadata store will be connected later.
+const DATASET_STORAGE_KEY =
+  "sentinelvision_dataset_history";
+
+
+// Maximum client-side upload sizes.
+const MAX_IMAGE_SIZE_BYTES =
+  20 * 1024 * 1024;
+
+const MAX_VIDEO_SIZE_BYTES =
+  200 * 1024 * 1024;
 
 
 // ===========================================================================
@@ -33,63 +60,150 @@ function formatBytes(bytes) {
     return "0 Bytes";
   }
 
-  const units = ["Bytes", "KB", "MB", "GB"];
-  const unitIndex = Math.floor(
-    Math.log(bytes) / Math.log(1024)
+  const units = [
+    "Bytes",
+    "KB",
+    "MB",
+    "GB",
+  ];
+
+  const unitIndex = Math.min(
+    Math.floor(
+      Math.log(bytes) /
+        Math.log(1024)
+    ),
+    units.length - 1
   );
 
-  const value = bytes / Math.pow(1024, unitIndex);
+  const value =
+    bytes /
+    Math.pow(
+      1024,
+      unitIndex
+    );
 
   return `${value.toFixed(2)} ${units[unitIndex]}`;
 }
 
 
 /**
- * Convert metadata field names into user-friendly labels.
+ * Return the locally stored SentinelVision datasets.
  *
- * Example:
- * blur_score -> Blur Score
- *
- * @param {string} value Metadata property name.
- * @returns {string} Human-readable label.
+ * @returns {Array} Dataset history.
  */
-function formatLabel(value) {
-  return value
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase()
+function readDatasetHistory() {
+  try {
+    const storedValue =
+      window.localStorage.getItem(
+        DATASET_STORAGE_KEY
+      );
+
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedValue =
+      JSON.parse(storedValue);
+
+    return Array.isArray(parsedValue)
+      ? parsedValue
+      : [];
+  } catch (error) {
+    console.error(
+      "[SentinelVision] Failed to read local dataset history:",
+      error
     );
+
+    return [];
+  }
 }
 
 
 /**
- * Display metadata values cleanly.
+ * Save SentinelVision dataset history locally.
  *
- * @param {*} value Metadata value.
- * @param {string} key Metadata key.
- * @returns {string} Formatted value.
+ * @param {Array} datasets Dataset history.
  */
-function formatMetadataValue(value, key) {
-  if (value === null || value === undefined) {
-    return "None";
+function saveDatasetHistory(
+  datasets
+) {
+  try {
+    window.localStorage.setItem(
+      DATASET_STORAGE_KEY,
+      JSON.stringify(datasets)
+    );
+  } catch (error) {
+    console.error(
+      "[SentinelVision] Failed to save local dataset history:",
+      error
+    );
   }
+}
 
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
+
+/**
+ * Validate a file before requesting an AWS presigned URL.
+ *
+ * @param {"image"|"video"} mediaType Media type.
+ * @param {File} file Browser File object.
+ */
+function validateSelectedFile(
+  mediaType,
+  file
+) {
+  const extension =
+    file.name
+      .split(".")
+      .pop()
+      ?.toLowerCase();
+
+  if (mediaType === "image") {
+    const allowedExtensions = [
+      "jpg",
+      "jpeg",
+      "png",
+      "avif",
+    ];
+
+    if (
+      !extension ||
+      !allowedExtensions.includes(
+        extension
+      )
+    ) {
+      throw new Error(
+        "Supported image formats are JPG, JPEG, PNG and AVIF."
+      );
+    }
+
+    if (
+      file.size >
+      MAX_IMAGE_SIZE_BYTES
+    ) {
+      throw new Error(
+        "The image exceeds the 20 MB upload limit."
+      );
+    }
+
+    return;
   }
 
   if (
-    typeof value === "number" &&
-    !Number.isInteger(value)
+    extension !== "mp4"
   ) {
-    return value.toFixed(2);
+    throw new Error(
+      "Only MP4 video files are currently supported."
+    );
   }
 
-  if (key === "file_size_bytes") {
-    return formatBytes(value);
+  if (
+    file.size >
+    MAX_VIDEO_SIZE_BYTES
+  ) {
+    throw new Error(
+      "The video exceeds the 200 MB upload limit."
+    );
   }
-
-  return String(value);
 }
 
 
@@ -126,7 +240,7 @@ function Navigation() {
 
         <nav className="nav-links">
           <a href="#analyse">
-            Analyse
+            Upload
           </a>
 
           <a href="#datasets">
@@ -148,11 +262,16 @@ function Navigation() {
 
 
 /**
- * Hero section explaining the product to first-time users.
+ * Hero section explaining the platform.
  *
- * @param {string} apiStatus Current FastAPI health status.
+ * @param {string} apiStatus Current AWS API status.
  */
-function Hero({ apiStatus }) {
+function Hero({
+  apiStatus,
+}) {
+  const online =
+    apiStatus === "healthy";
+
   return (
     <section
       id="home"
@@ -160,18 +279,23 @@ function Hero({ apiStatus }) {
     >
       <div className="hero-content">
         <div className="eyebrow">
-          ML-ready image & video quality analysis
+          Serverless image & video data ingestion
         </div>
 
         <h1>
           Understand your visual data
-          <span> before your model does.</span>
+          <span>
+            {" "}
+            before your model does.
+          </span>
         </h1>
 
         <p className="hero-description">
-          SentinelVision analyses images and videos for
-          metadata, quality, integrity, dimensions and
-          machine-learning readiness — automatically.
+          SentinelVision securely ingests
+          images and videos into an
+          ML-oriented AWS data pipeline
+          using serverless APIs and
+          direct Amazon S3 uploads.
         </p>
 
         <div className="hero-actions">
@@ -179,7 +303,7 @@ function Hero({ apiStatus }) {
             href="#analyse"
             className="primary-button"
           >
-            Analyse your data
+            Upload your data
           </a>
 
           <a
@@ -193,13 +317,13 @@ function Hero({ apiStatus }) {
         <div className="hero-status">
           <span
             className={
-              apiStatus === "healthy"
+              online
                 ? "status-dot status-dot-online"
                 : "status-dot status-dot-offline"
             }
           />
 
-          API status:
+          AWS API status:
 
           <strong>
             {apiStatus}
@@ -219,9 +343,12 @@ function Hero({ apiStatus }) {
             </span>
 
             <div>
-              <strong>Upload</strong>
+              <strong>
+                Request
+              </strong>
+
               <small>
-                Image or video
+                Presigned upload URL
               </small>
             </div>
           </div>
@@ -234,9 +361,12 @@ function Hero({ apiStatus }) {
             </span>
 
             <div>
-              <strong>Store</strong>
+              <strong>
+                Upload
+              </strong>
+
               <small>
-                Secure Amazon S3 storage
+                Browser directly to S3
               </small>
             </div>
           </div>
@@ -249,9 +379,12 @@ function Hero({ apiStatus }) {
             </span>
 
             <div>
-              <strong>Analyse</strong>
+              <strong>
+                Store
+              </strong>
+
               <small>
-                OpenCV quality processing
+                Dataset-specific S3 path
               </small>
             </div>
           </div>
@@ -264,9 +397,12 @@ function Hero({ apiStatus }) {
             </span>
 
             <div>
-              <strong>Inspect</strong>
+              <strong>
+                Process
+              </strong>
+
               <small>
-                ML-ready metadata
+                Ready for ML analysis
               </small>
             </div>
           </div>
@@ -284,28 +420,40 @@ function FeatureStats() {
   return (
     <section className="feature-stats">
       <div className="stat">
-        <strong>Images</strong>
+        <strong>
+          Images
+        </strong>
+
         <span>
           JPG · JPEG · PNG · AVIF
         </span>
       </div>
 
       <div className="stat">
-        <strong>Videos</strong>
+        <strong>
+          Videos
+        </strong>
+
         <span>
-          MP4 analysis
+          MP4 ingestion
         </span>
       </div>
 
       <div className="stat">
-        <strong>Integrity</strong>
+        <strong>
+          Architecture
+        </strong>
+
         <span>
-          SHA-256 fingerprints
+          Event-ready serverless
         </span>
       </div>
 
       <div className="stat">
-        <strong>Storage</strong>
+        <strong>
+          Storage
+        </strong>
+
         <span>
           Amazon S3
         </span>
@@ -328,7 +476,8 @@ function UploadCard({
   onUpload,
   uploading,
 }) {
-  const inputId = `${mediaType}-file-input`;
+  const inputId =
+    `${mediaType}-file-input`;
 
   return (
     <div className="upload-card">
@@ -336,7 +485,9 @@ function UploadCard({
         <div
           className={`media-icon ${mediaType}-icon`}
         >
-          {mediaType === "image" ? "IMG" : "VID"}
+          {mediaType === "image"
+            ? "IMG"
+            : "VID"}
         </div>
 
         <div>
@@ -382,7 +533,9 @@ function UploadCard({
             </strong>
 
             <span>
-              {formatBytes(file.size)}
+              {formatBytes(
+                file.size
+              )}
             </span>
           </div>
 
@@ -396,11 +549,14 @@ function UploadCard({
         className="upload-button"
         type="button"
         onClick={onUpload}
-        disabled={!file || uploading}
+        disabled={
+          !file ||
+          uploading
+        }
       >
         {uploading
-          ? "Analysing..."
-          : `Analyse ${mediaType}`
+          ? "Uploading..."
+          : `Upload ${mediaType}`
         }
       </button>
 
@@ -416,136 +572,25 @@ function UploadCard({
 
 
 /**
- * Quality overview for image metadata.
+ * Upload result returned after the direct-to-S3 workflow succeeds.
  */
-function QualitySummary({ metadata }) {
-  if (!metadata) {
-    return null;
-  }
-
-  const brightnessNormal =
-    metadata.brightness_warning === "Normal";
-
-  const blurNormal =
-    metadata.blur_warning === "Normal";
-
-  const fileHealthy =
-    metadata.is_corrupted === false;
-
-  return (
-    <div className="quality-grid">
-      <div className="quality-card">
-        <span>
-          File integrity
-        </span>
-
-        <strong>
-          {fileHealthy ? "Valid" : "Problem"}
-        </strong>
-
-        <span
-          className={
-            fileHealthy
-              ? "quality-good"
-              : "quality-warning"
-          }
-        >
-          {fileHealthy ? "Passed" : "Check required"}
-        </span>
-      </div>
-
-      {"brightness" in metadata && (
-        <div className="quality-card">
-          <span>
-            Brightness
-          </span>
-
-          <strong>
-            {Number(
-              metadata.brightness
-            ).toFixed(2)}
-          </strong>
-
-          <span
-            className={
-              brightnessNormal
-                ? "quality-good"
-                : "quality-warning"
-            }
-          >
-            {metadata.brightness_warning}
-          </span>
-        </div>
-      )}
-
-      {"blur_score" in metadata && (
-        <div className="quality-card">
-          <span>
-            Blur score
-          </span>
-
-          <strong>
-            {Number(
-              metadata.blur_score
-            ).toFixed(2)}
-          </strong>
-
-          <span
-            className={
-              blurNormal
-                ? "quality-good"
-                : "quality-warning"
-            }
-          >
-            {blurNormal
-              ? "Sharp"
-              : "Potential blur"
-            }
-          </span>
-        </div>
-      )}
-
-      {"width" in metadata &&
-        "height" in metadata && (
-          <div className="quality-card">
-            <span>
-              Resolution
-            </span>
-
-            <strong>
-              {metadata.width} × {metadata.height}
-            </strong>
-
-            <span className="quality-neutral">
-              pixels
-            </span>
-          </div>
-        )}
-    </div>
-  );
-}
-
-
-/**
- * Full analysis result returned from FastAPI.
- */
-function AnalysisResult({ response }) {
+function UploadResult({
+  response,
+}) {
   if (!response) {
     return null;
   }
-
-  const metadata = response.result?.metadata;
 
   return (
     <section className="result-panel">
       <div className="section-heading">
         <div>
           <span className="section-label">
-            Analysis complete
+            Upload complete
           </span>
 
           <h2>
-            Your results
+            File stored successfully
           </h2>
         </div>
 
@@ -556,11 +601,13 @@ function AnalysisResult({ response }) {
 
       <div className="result-message">
         <strong>
-          {response.result?.original_filename}
+          {response.original_filename}
         </strong>
 
         <span>
-          {response.message}
+          Your file was uploaded directly
+          to Amazon S3 using a temporary
+          presigned URL.
         </span>
       </div>
 
@@ -583,7 +630,7 @@ function AnalysisResult({ response }) {
             );
 
             console.info(
-              "[SentinelVision] Dataset ID copied to clipboard:",
+              "[SentinelVision] Dataset ID copied:",
               response.dataset_id
             );
           }}
@@ -593,47 +640,60 @@ function AnalysisResult({ response }) {
       </div>
 
       <h3 className="subsection-title">
-        Quality overview
-      </h3>
-
-      <QualitySummary
-        metadata={metadata}
-      />
-
-      <h3 className="subsection-title">
-        Technical metadata
+        Upload information
       </h3>
 
       <div className="metadata-table">
-        {metadata &&
-          Object.entries(metadata).map(
-            ([key, value]) => (
-              <div
-                className="metadata-row"
-                key={key}
-              >
-                <span>
-                  {formatLabel(key)}
-                </span>
+        <div className="metadata-row">
+          <span>
+            Media type
+          </span>
 
-                <strong>
-                  {formatMetadataValue(
-                    value,
-                    key
-                  )}
-                </strong>
-              </div>
-            )
-          )}
+          <strong>
+            {response.media_type}
+          </strong>
+        </div>
+
+        <div className="metadata-row">
+          <span>
+            File size
+          </span>
+
+          <strong>
+            {formatBytes(
+              response.file_size_bytes
+            )}
+          </strong>
+        </div>
+
+        <div className="metadata-row">
+          <span>
+            Storage status
+          </span>
+
+          <strong>
+            Stored in Amazon S3
+          </strong>
+        </div>
+
+        <div className="metadata-row">
+          <span>
+            Upload architecture
+          </span>
+
+          <strong>
+            Direct-to-S3
+          </strong>
+        </div>
       </div>
 
       <div className="storage-information">
         <strong>
-          Cloud storage
+          S3 object key
         </strong>
 
         <code>
-          {response.result?.s3_key}
+          {response.s3_key}
         </code>
       </div>
     </section>
@@ -642,9 +702,11 @@ function AnalysisResult({ response }) {
 
 
 /**
- * Dataset information returned from /datasets/{dataset_id}.
+ * Dataset information stored by the browser.
  */
-function DatasetDetails({ dataset }) {
+function DatasetDetails({
+  dataset,
+}) {
   if (!dataset) {
     return null;
   }
@@ -664,7 +726,8 @@ function DatasetDetails({ dataset }) {
       <div className="dataset-count-grid">
         <div>
           <strong>
-            {dataset.images?.length ?? 0}
+            {dataset.images?.length ??
+              0}
           </strong>
 
           <span>
@@ -674,7 +737,8 @@ function DatasetDetails({ dataset }) {
 
         <div>
           <strong>
-            {dataset.videos?.length ?? 0}
+            {dataset.videos?.length ??
+              0}
           </strong>
 
           <span>
@@ -684,7 +748,10 @@ function DatasetDetails({ dataset }) {
       </div>
 
       {dataset.images?.map(
-        (image, index) => (
+        (
+          image,
+          index
+        ) => (
           <div
             className="dataset-media-item"
             key={`image-${index}`}
@@ -695,7 +762,9 @@ function DatasetDetails({ dataset }) {
               </span>
 
               <strong>
-                {image.original_filename}
+                {
+                  image.original_filename
+                }
               </strong>
             </div>
 
@@ -709,7 +778,10 @@ function DatasetDetails({ dataset }) {
       )}
 
       {dataset.videos?.map(
-        (video, index) => (
+        (
+          video,
+          index
+        ) => (
           <div
             className="dataset-media-item"
             key={`video-${index}`}
@@ -720,7 +792,9 @@ function DatasetDetails({ dataset }) {
               </span>
 
               <strong>
-                {video.original_filename}
+                {
+                  video.original_filename
+                }
               </strong>
             </div>
 
@@ -746,138 +820,160 @@ function App() {
   // System state
   // -------------------------------------------------------------------------
 
-  const [apiStatus, setApiStatus] =
-    useState("Checking...");
+  const [
+    apiStatus,
+    setApiStatus,
+  ] = useState(
+    "Checking..."
+  );
 
-  const [systemError, setSystemError] =
-    useState("");
+  const [
+    systemError,
+    setSystemError,
+  ] = useState("");
 
 
   // -------------------------------------------------------------------------
   // Upload state
   // -------------------------------------------------------------------------
 
-  const [imageFile, setImageFile] =
-    useState(null);
+  const [
+    imageFile,
+    setImageFile,
+  ] = useState(null);
 
-  const [videoFile, setVideoFile] =
-    useState(null);
+  const [
+    videoFile,
+    setVideoFile,
+  ] = useState(null);
 
-  const [uploadingType, setUploadingType] =
-    useState("");
+  const [
+    uploadingType,
+    setUploadingType,
+  ] = useState("");
 
-  const [uploadError, setUploadError] =
-    useState("");
+  const [
+    uploadError,
+    setUploadError,
+  ] = useState("");
 
-  const [analysisResult, setAnalysisResult] =
-    useState(null);
+  const [
+    uploadResult,
+    setUploadResult,
+  ] = useState(null);
 
 
   // -------------------------------------------------------------------------
   // Dataset state
   // -------------------------------------------------------------------------
 
-  const [datasets, setDatasets] =
-    useState([]);
+  const [
+    datasets,
+    setDatasets,
+  ] = useState([]);
 
-  const [datasetQuery, setDatasetQuery] =
-    useState("");
+  const [
+    datasetQuery,
+    setDatasetQuery,
+  ] = useState("");
 
-  const [datasetDetails, setDatasetDetails] =
-    useState(null);
+  const [
+    datasetDetails,
+    setDatasetDetails,
+  ] = useState(null);
 
-  const [datasetError, setDatasetError] =
-    useState("");
+  const [
+    datasetError,
+    setDatasetError,
+  ] = useState("");
 
-  const [datasetLoading, setDatasetLoading] =
-    useState(false);
+  const [
+    datasetLoading,
+    setDatasetLoading,
+  ] = useState(false);
 
 
   // -------------------------------------------------------------------------
-  // API health check
+  // AWS API connectivity check
   // -------------------------------------------------------------------------
 
-  const checkApiHealth = useCallback(
-    async () => {
-      console.info(
-        "[SentinelVision] Checking API health..."
-      );
-
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/health`
+  const checkApiHealth =
+    useCallback(
+      async () => {
+        console.info(
+          "[SentinelVision] Checking AWS API connectivity..."
         );
 
-        if (!response.ok) {
-          throw new Error(
-            `Health endpoint returned HTTP ${response.status}`
+        setApiStatus(
+          "Checking..."
+        );
+
+        try {
+          const response =
+            await fetch(
+              `${API_BASE_URL}/upload-url`,
+              {
+                method:
+                  "OPTIONS",
+              }
+            );
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              `API Gateway returned HTTP ${response.status}`
+            );
+          }
+
+          console.info(
+            "[SentinelVision] AWS API Gateway is reachable."
+          );
+
+          setApiStatus(
+            "healthy"
+          );
+
+          setSystemError(
+            ""
+          );
+        } catch (error) {
+          console.error(
+            "[SentinelVision] AWS API connectivity check failed:",
+            error
+          );
+
+          setApiStatus(
+            "Unavailable"
+          );
+
+          setSystemError(
+            "The SentinelVision AWS upload API cannot currently be reached."
           );
         }
-
-        const data = await response.json();
-
-        console.info(
-          "[SentinelVision] API health check successful:",
-          data
-        );
-
-        setApiStatus(data.status);
-        setSystemError("");
-      } catch (error) {
-        console.error(
-          "[SentinelVision] API health check failed:",
-          error
-        );
-
-        setApiStatus("Unavailable");
-
-        setSystemError(
-          "The SentinelVision API cannot currently be reached."
-        );
-      }
-    },
-    []
-  );
+      },
+      []
+    );
 
 
   // -------------------------------------------------------------------------
-  // Dataset list retrieval
+  // Dataset history
   // -------------------------------------------------------------------------
 
-  const loadDatasets = useCallback(
-    async () => {
+  const loadDatasets =
+    useCallback(() => {
+      const history =
+        readDatasetHistory();
+
       console.info(
-        "[SentinelVision] Loading dataset history..."
+        "[SentinelVision] Local dataset history loaded:",
+        history.length
       );
 
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/datasets`
-        );
-
-        if (!response.ok) {
-          throw new Error(
-            `Dataset endpoint returned HTTP ${response.status}`
-          );
-        }
-
-        const data = await response.json();
-
-        console.info(
-          "[SentinelVision] Dataset history loaded:",
-          data.dataset_count
-        );
-
-        setDatasets(data.datasets || []);
-      } catch (error) {
-        console.error(
-          "[SentinelVision] Failed to load dataset history:",
-          error
-        );
-      }
-    },
-    []
-  );
+      setDatasets(
+        history
+      );
+    }, []);
 
 
   // -------------------------------------------------------------------------
@@ -887,6 +983,11 @@ function App() {
   useEffect(() => {
     console.info(
       "[SentinelVision] React application started."
+    );
+
+    console.info(
+      "[SentinelVision] AWS API:",
+      API_BASE_URL
     );
 
     checkApiHealth();
@@ -901,9 +1002,12 @@ function App() {
   // File selection
   // -------------------------------------------------------------------------
 
-  function handleImageSelection(event) {
+  function handleImageSelection(
+    event
+  ) {
     const selectedFile =
-      event.target.files?.[0];
+      event.target
+        .files?.[0];
 
     if (!selectedFile) {
       return;
@@ -916,14 +1020,22 @@ function App() {
       "bytes"
     );
 
-    setImageFile(selectedFile);
-    setUploadError("");
+    setImageFile(
+      selectedFile
+    );
+
+    setUploadError(
+      ""
+    );
   }
 
 
-  function handleVideoSelection(event) {
+  function handleVideoSelection(
+    event
+  ) {
     const selectedFile =
-      event.target.files?.[0];
+      event.target
+        .files?.[0];
 
     if (!selectedFile) {
       return;
@@ -936,13 +1048,18 @@ function App() {
       "bytes"
     );
 
-    setVideoFile(selectedFile);
-    setUploadError("");
+    setVideoFile(
+      selectedFile
+    );
+
+    setUploadError(
+      ""
+    );
   }
 
 
   // -------------------------------------------------------------------------
-  // Upload and analysis
+  // Serverless upload workflow
   // -------------------------------------------------------------------------
 
   async function uploadMedia(
@@ -954,67 +1071,246 @@ function App() {
         `Please choose a ${mediaType} first.`
       );
 
-      console.warn(
-        `[SentinelVision] ${mediaType} upload attempted without a file.`
-      );
-
       return;
     }
 
     console.info(
-      `[SentinelVision] Starting ${mediaType} upload:`,
+      `[SentinelVision] Starting serverless ${mediaType} upload:`,
       file.name
     );
 
-    setUploadingType(mediaType);
-    setUploadError("");
-    setAnalysisResult(null);
+    setUploadingType(
+      mediaType
+    );
 
-    const formData = new FormData();
+    setUploadError(
+      ""
+    );
 
-    formData.append(
-      "file",
-      file
+    setUploadResult(
+      null
     );
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/upload/${mediaType}`,
-        {
-          method: "POST",
-          body: formData,
-        }
+      // ---------------------------------------------------------------------
+      // Step 1: Validate locally before calling AWS.
+      // ---------------------------------------------------------------------
+
+      validateSelectedFile(
+        mediaType,
+        file
       );
 
-      const data = await response.json();
 
-      if (!response.ok) {
-        const message =
-          data.detail ||
-          `Upload failed with HTTP ${response.status}`;
-
-        throw new Error(message);
-      }
+      // ---------------------------------------------------------------------
+      // Step 2: Ask API Gateway/Lambda for a temporary S3 upload URL.
+      // ---------------------------------------------------------------------
 
       console.info(
-        `[SentinelVision] ${mediaType} analysis completed successfully:`,
-        data.dataset_id
+        "[SentinelVision] Requesting presigned S3 URL..."
       );
 
-      setAnalysisResult(data);
+      const presignedResponse =
+        await fetch(
+          `${API_BASE_URL}/upload-url`,
+          {
+            method:
+              "POST",
 
-      // Refresh the dataset history after successful processing.
-      await loadDatasets();
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
 
-      // Automatically bring the completed analysis into view.
-      window.setTimeout(() => {
-        document
-          .getElementById("analysis-result")
-          ?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
-      }, 100);
+            body:
+              JSON.stringify({
+                filename:
+                  file.name,
+
+                media_type:
+                  mediaType,
+              }),
+          }
+        );
+
+
+      const presignedData =
+        await presignedResponse.json();
+
+
+      if (
+        !presignedResponse.ok
+      ) {
+        throw new Error(
+          presignedData.error ||
+          `Unable to create upload URL. HTTP ${presignedResponse.status}`
+        );
+      }
+
+
+      if (
+        !presignedData.upload_url ||
+        !presignedData.dataset_id ||
+        !presignedData.s3_key
+      ) {
+        throw new Error(
+          "The AWS upload API returned an incomplete response."
+        );
+      }
+
+
+      console.info(
+        "[SentinelVision] Presigned URL created:",
+        presignedData.dataset_id
+      );
+
+
+      // ---------------------------------------------------------------------
+      // Step 3: Upload the actual file directly from the browser to Amazon S3.
+      //
+      // The file does NOT pass through Lambda or API Gateway.
+      // ---------------------------------------------------------------------
+
+      console.info(
+        "[SentinelVision] Uploading file directly to Amazon S3..."
+      );
+
+
+      const s3Response =
+        await fetch(
+          presignedData.upload_url,
+          {
+            method:
+              "PUT",
+
+            body:
+              file,
+          }
+        );
+
+
+      if (
+        !s3Response.ok
+      ) {
+        throw new Error(
+          `Amazon S3 upload failed with HTTP ${s3Response.status}.`
+        );
+      }
+
+
+      console.info(
+        "[SentinelVision] Direct S3 upload completed successfully:",
+        presignedData.s3_key
+      );
+
+
+      // ---------------------------------------------------------------------
+      // Step 4: Build a browser-side dataset record.
+      //
+      // Persistent metadata storage will move to AWS in a later stage.
+      // ---------------------------------------------------------------------
+
+      const mediaRecord = {
+        original_filename:
+          file.name,
+
+        file_size_bytes:
+          file.size,
+
+        s3_key:
+          presignedData.s3_key,
+
+        uploaded_at:
+          new Date().toISOString(),
+      };
+
+
+      const dataset = {
+        dataset_id:
+          presignedData.dataset_id,
+
+        created_at:
+          new Date().toISOString(),
+
+        images:
+          mediaType === "image"
+            ? [mediaRecord]
+            : [],
+
+        videos:
+          mediaType === "video"
+            ? [mediaRecord]
+            : [],
+      };
+
+
+      const currentHistory =
+        readDatasetHistory();
+
+
+      const updatedHistory = [
+        dataset,
+        ...currentHistory,
+      ].slice(
+        0,
+        50
+      );
+
+
+      saveDatasetHistory(
+        updatedHistory
+      );
+
+
+      setDatasets(
+        updatedHistory
+      );
+
+
+      setUploadResult({
+        status:
+          "success",
+
+        dataset_id:
+          presignedData.dataset_id,
+
+        original_filename:
+          file.name,
+
+        file_size_bytes:
+          file.size,
+
+        media_type:
+          mediaType,
+
+        s3_key:
+          presignedData.s3_key,
+      });
+
+
+      setApiStatus(
+        "healthy"
+      );
+
+
+      // Automatically bring the result into view.
+      window.setTimeout(
+        () => {
+          document
+            .getElementById(
+              "analysis-result"
+            )
+            ?.scrollIntoView({
+              behavior:
+                "smooth",
+
+              block:
+                "start",
+            });
+        },
+        100
+      );
+
     } catch (error) {
       console.error(
         `[SentinelVision] ${mediaType} upload failed:`,
@@ -1023,13 +1319,15 @@ function App() {
 
       setUploadError(
         error.message ||
-        "The file could not be processed."
+        "The file could not be uploaded."
       );
     } finally {
-      setUploadingType("");
+      setUploadingType(
+        ""
+      );
 
       console.info(
-        `[SentinelVision] ${mediaType} upload request finished.`
+        `[SentinelVision] ${mediaType} upload workflow finished.`
       );
     }
   }
@@ -1039,7 +1337,9 @@ function App() {
   // Dataset lookup
   // -------------------------------------------------------------------------
 
-  async function lookupDataset(event) {
+  async function lookupDataset(
+    event
+  ) {
     event.preventDefault();
 
     const datasetId =
@@ -1054,36 +1354,47 @@ function App() {
     }
 
     console.info(
-      "[SentinelVision] Looking up dataset:",
+      "[SentinelVision] Looking up local dataset:",
       datasetId
     );
 
-    setDatasetLoading(true);
-    setDatasetError("");
-    setDatasetDetails(null);
+    setDatasetLoading(
+      true
+    );
+
+    setDatasetError(
+      ""
+    );
+
+    setDatasetDetails(
+      null
+    );
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/datasets/${encodeURIComponent(
-          datasetId
-        )}`
-      );
+      const history =
+        readDatasetHistory();
 
-      const data = await response.json();
+      const match =
+        history.find(
+          (dataset) =>
+            dataset.dataset_id ===
+            datasetId
+        );
 
-      if (!response.ok) {
+      if (!match) {
         throw new Error(
-          data.detail ||
-          "Dataset could not be found."
+          "Dataset was not found in this browser's local history."
         );
       }
+
+      setDatasetDetails(
+        match
+      );
 
       console.info(
         "[SentinelVision] Dataset lookup successful:",
         datasetId
       );
-
-      setDatasetDetails(data);
     } catch (error) {
       console.error(
         "[SentinelVision] Dataset lookup failed:",
@@ -1094,7 +1405,9 @@ function App() {
         error.message
       );
     } finally {
-      setDatasetLoading(false);
+      setDatasetLoading(
+        false
+      );
     }
   }
 
@@ -1109,14 +1422,16 @@ function App() {
 
       <main>
         <Hero
-          apiStatus={apiStatus}
+          apiStatus={
+            apiStatus
+          }
         />
 
         <FeatureStats />
 
 
         {/* --------------------------------------------------------------- */}
-        {/* Upload and analysis                                             */}
+        {/* Upload                                                         */}
         {/* --------------------------------------------------------------- */}
 
         <section
@@ -1130,14 +1445,17 @@ function App() {
               </span>
 
               <h2>
-                Analyse visual data
+                Upload visual data
               </h2>
 
               <p>
-                Choose an image or video. SentinelVision
-                will securely upload the file, extract
-                technical metadata and run automated
-                quality checks.
+                Choose an image or
+                video. SentinelVision
+                requests temporary
+                upload permission from
+                AWS and sends the file
+                directly from your
+                browser to Amazon S3.
               </p>
             </div>
           </div>
@@ -1145,12 +1463,12 @@ function App() {
           <div className="upload-grid">
             <UploadCard
               mediaType="image"
-              title="Analyse an image"
-              description={
-                "Inspect brightness, blur, resolution, integrity and SHA-256 metadata."
-              }
+              title="Upload an image"
+              description="Securely ingest JPG, JPEG, PNG or AVIF imagery into the SentinelVision AWS data pipeline."
               accept=".jpg,.jpeg,.png,.avif"
-              file={imageFile}
+              file={
+                imageFile
+              }
               onFileChange={
                 handleImageSelection
               }
@@ -1161,18 +1479,19 @@ function App() {
                 )
               }
               uploading={
-                uploadingType === "image"
+                uploadingType ===
+                "image"
               }
             />
 
             <UploadCard
               mediaType="video"
-              title="Analyse a video"
-              description={
-                "Inspect resolution, frame rate, frame count, duration and integrity."
-              }
+              title="Upload a video"
+              description="Securely ingest MP4 video directly into dataset-specific Amazon S3 storage."
               accept=".mp4"
-              file={videoFile}
+              file={
+                videoFile
+              }
               onFileChange={
                 handleVideoSelection
               }
@@ -1183,7 +1502,8 @@ function App() {
                 )
               }
               uploading={
-                uploadingType === "video"
+                uploadingType ===
+                "video"
               }
             />
           </div>
@@ -1191,25 +1511,29 @@ function App() {
           {uploadError && (
             <div className="error-banner">
               <strong>
-                Analysis failed
+                Upload failed
               </strong>
 
               <span>
-                {uploadError}
+                {
+                  uploadError
+                }
               </span>
             </div>
           )}
 
           <div id="analysis-result">
-            <AnalysisResult
-              response={analysisResult}
+            <UploadResult
+              response={
+                uploadResult
+              }
             />
           </div>
         </section>
 
 
         {/* --------------------------------------------------------------- */}
-        {/* Dataset explorer                                                */}
+        {/* Dataset explorer                                               */}
         {/* --------------------------------------------------------------- */}
 
         <section
@@ -1223,13 +1547,17 @@ function App() {
               </span>
 
               <h2>
-                Find previous analyses
+                Find recent uploads
               </h2>
 
               <p>
-                Every completed analysis receives a
-                unique dataset ID. Use it to inspect
-                results from the current API session.
+                Every upload receives a
+                unique dataset ID.
+                Dataset history is
+                currently stored in this
+                browser while the
+                persistent AWS metadata
+                layer is being built.
               </p>
             </div>
           </div>
@@ -1241,27 +1569,38 @@ function App() {
               </h3>
 
               <p>
-                Paste the ID returned after an upload.
+                Paste an ID returned
+                after an upload.
               </p>
 
               <form
-                onSubmit={lookupDataset}
+                onSubmit={
+                  lookupDataset
+                }
                 className="dataset-search-form"
               >
                 <input
                   type="text"
-                  value={datasetQuery}
-                  onChange={(event) =>
+                  value={
+                    datasetQuery
+                  }
+                  onChange={(
+                    event
+                  ) =>
                     setDatasetQuery(
-                      event.target.value
+                      event
+                        .target
+                        .value
                     )
                   }
-                  placeholder="e.g. f1394d7e-066f-4cb8..."
+                  placeholder="e.g. 9787d7c6-90d2-43e1..."
                 />
 
                 <button
                   type="submit"
-                  disabled={datasetLoading}
+                  disabled={
+                    datasetLoading
+                  }
                 >
                   {datasetLoading
                     ? "Searching..."
@@ -1272,12 +1611,16 @@ function App() {
 
               {datasetError && (
                 <p className="inline-error">
-                  {datasetError}
+                  {
+                    datasetError
+                  }
                 </p>
               )}
 
               <DatasetDetails
-                dataset={datasetDetails}
+                dataset={
+                  datasetDetails
+                }
               />
             </div>
 
@@ -1289,30 +1632,36 @@ function App() {
                   </h3>
 
                   <p>
-                    Current API session
+                    This browser
                   </p>
                 </div>
 
                 <span className="count-badge">
-                  {datasets.length}
+                  {
+                    datasets.length
+                  }
                 </span>
               </div>
 
-              {datasets.length === 0 ? (
+              {datasets.length ===
+              0 ? (
                 <div className="empty-state">
                   <strong>
                     No datasets yet
                   </strong>
 
                   <span>
-                    Analyse an image or video to
-                    create your first dataset.
+                    Upload an image or
+                    video to create
+                    your first dataset.
                   </span>
                 </div>
               ) : (
                 <div className="recent-dataset-list">
                   {datasets.map(
-                    (dataset) => (
+                    (
+                      dataset
+                    ) => (
                       <button
                         type="button"
                         className="recent-dataset"
@@ -1320,28 +1669,49 @@ function App() {
                           dataset.dataset_id
                         }
                         onClick={() => {
-                          console.info(
-                            "[SentinelVision] Dataset selected from history:",
+                          setDatasetQuery(
                             dataset.dataset_id
                           );
 
-                          setDatasetQuery(
-                            dataset.dataset_id
+                          setDatasetDetails(
+                            dataset
+                          );
+
+                          setDatasetError(
+                            ""
                           );
                         }}
                       >
                         <code>
-                          {dataset.dataset_id}
+                          {
+                            dataset.dataset_id
+                          }
                         </code>
 
                         <span>
-                          {dataset.image_count} image
-                          {dataset.image_count !== 1
+                          {dataset
+                            .images
+                            ?.length ??
+                            0}{" "}
+                          image
+                          {(dataset
+                            .images
+                            ?.length ??
+                            0) !==
+                          1
                             ? "s"
                             : ""}
                           {" · "}
-                          {dataset.video_count} video
-                          {dataset.video_count !== 1
+                          {dataset
+                            .videos
+                            ?.length ??
+                            0}{" "}
+                          video
+                          {(dataset
+                            .videos
+                            ?.length ??
+                            0) !==
+                          1
                             ? "s"
                             : ""}
                         </span>
@@ -1356,7 +1726,7 @@ function App() {
 
 
         {/* --------------------------------------------------------------- */}
-        {/* User guidance                                                   */}
+        {/* User guidance                                                  */}
         {/* --------------------------------------------------------------- */}
 
         <section
@@ -1374,9 +1744,12 @@ function App() {
               </h2>
 
               <p>
-                You do not need to understand OpenCV,
-                databases or cloud infrastructure to
-                use the platform.
+                SentinelVision uses a
+                serverless ingestion
+                architecture so large
+                media files do not need
+                to travel through an
+                application server.
               </p>
             </div>
           </div>
@@ -1392,7 +1765,8 @@ function App() {
               </h3>
 
               <p>
-                Upload a supported image or MP4 video
+                Select a supported
+                image or MP4 video
                 from your device.
               </p>
             </article>
@@ -1403,14 +1777,15 @@ function App() {
               </span>
 
               <h3>
-                Secure processing
+                Request permission
               </h3>
 
               <p>
-                SentinelVision generates a unique
-                dataset identifier and stores the raw
-                file in a dataset-specific Amazon S3
-                location.
+                API Gateway invokes an
+                AWS Lambda function
+                that generates a
+                short-lived presigned
+                S3 upload URL.
               </p>
             </article>
 
@@ -1420,14 +1795,14 @@ function App() {
               </span>
 
               <h3>
-                Automated analysis
+                Direct S3 upload
               </h3>
 
               <p>
-                OpenCV extracts dimensions, quality
-                signals and technical metadata while
-                SHA-256 creates a reproducible file
-                fingerprint.
+                Your browser uploads
+                the media directly to
+                a dataset-specific
+                Amazon S3 location.
               </p>
             </article>
 
@@ -1437,13 +1812,16 @@ function App() {
               </span>
 
               <h3>
-                Review results
+                Ready for processing
               </h3>
 
               <p>
-                Inspect quality warnings, metadata and
-                your unique dataset ID directly in the
-                browser.
+                The stored object can
+                trigger downstream
+                metadata extraction,
+                quality validation
+                and ML-readiness
+                processing.
               </p>
             </article>
           </div>
@@ -1452,88 +1830,102 @@ function App() {
           <div className="metric-guide">
             <div className="metric-guide-heading">
               <span className="section-label">
-                Understanding results
+                Why this architecture?
               </span>
 
               <h2>
-                What do the metrics mean?
+                Designed for visual
+                data engineering
               </h2>
             </div>
 
             <div className="metric-list">
               <div className="metric-item">
                 <strong>
-                  Brightness
+                  Presigned URLs
                 </strong>
 
                 <p>
-                  Estimates the overall light intensity
-                  of an image. SentinelVision flags
-                  unusually dark or bright images using
-                  its configured quality thresholds.
+                  Provide temporary
+                  permission to upload
+                  one specific S3
+                  object without
+                  exposing AWS
+                  credentials to the
+                  browser.
                 </p>
               </div>
 
               <div className="metric-item">
                 <strong>
-                  Blur score
+                  Direct-to-S3
                 </strong>
 
                 <p>
-                  Estimates image sharpness. Lower
-                  values may indicate an image that is
-                  blurry or lacks sufficient visual
-                  detail.
+                  Large media bypasses
+                  API Gateway and
+                  Lambda payload
+                  limits by travelling
+                  directly from the
+                  browser to object
+                  storage.
                 </p>
               </div>
 
               <div className="metric-item">
                 <strong>
-                  SHA-256
+                  Dataset IDs
                 </strong>
 
                 <p>
-                  A deterministic fingerprint for a
-                  file. SentinelVision uses hashes to
-                  identify duplicate media reliably.
+                  Every upload receives
+                  a UUID so raw media
+                  and future processing
+                  results can be
+                  grouped reliably.
                 </p>
               </div>
 
               <div className="metric-item">
                 <strong>
-                  Resolution
+                  Least privilege
                 </strong>
 
                 <p>
-                  The width and height of visual media.
-                  Resolution is important when checking
-                  dataset consistency before machine
-                  learning.
+                  AWS IAM permissions
+                  restrict the Lambda
+                  function to the
+                  SentinelVision
+                  resources it needs.
                 </p>
               </div>
 
               <div className="metric-item">
                 <strong>
-                  Frame rate
+                  Serverless
                 </strong>
 
                 <p>
-                  For video files, FPS describes how
-                  many frames occur each second and
-                  helps identify inconsistent video
-                  sources.
+                  API Gateway and
+                  Lambda execute on
+                  demand without
+                  requiring a
+                  continuously running
+                  application server.
                 </p>
               </div>
 
               <div className="metric-item">
                 <strong>
-                  Corruption check
+                  Event ready
                 </strong>
 
                 <p>
-                  SentinelVision attempts to decode
-                  uploaded media and identifies files
-                  that cannot be processed correctly.
+                  S3 uploads can later
+                  trigger OpenCV
+                  processing and
+                  metadata extraction
+                  asynchronously.
                 </p>
               </div>
             </div>
@@ -1542,7 +1934,7 @@ function App() {
 
 
         {/* --------------------------------------------------------------- */}
-        {/* Platform architecture                                           */}
+        {/* Platform architecture                                          */}
         {/* --------------------------------------------------------------- */}
 
         <section className="architecture-section">
@@ -1552,15 +1944,18 @@ function App() {
             </span>
 
             <h2>
-              Built as a complete visual-data
-              engineering workflow
+              Built as a serverless
+              visual-data ingestion
+              workflow
             </h2>
 
             <p>
-              The interface hides the infrastructure
-              complexity while the backend handles
-              analysis, storage and dataset
-              organisation.
+              Files are uploaded
+              directly to Amazon S3
+              while AWS Lambda and API
+              Gateway handle secure
+              temporary upload
+              authorization.
             </p>
 
             <div className="architecture-flow">
@@ -1580,11 +1975,11 @@ function App() {
 
               <div>
                 <strong>
-                  FastAPI
+                  API Gateway
                 </strong>
 
                 <span>
-                  REST API
+                  HTTP API
                 </span>
               </div>
 
@@ -1594,11 +1989,11 @@ function App() {
 
               <div>
                 <strong>
-                  OpenCV
+                  AWS Lambda
                 </strong>
 
                 <span>
-                  Visual analysis
+                  Presigned URL
                 </span>
               </div>
 
@@ -1608,7 +2003,7 @@ function App() {
 
               <div>
                 <strong>
-                  AWS S3
+                  Amazon S3
                 </strong>
 
                 <span>
@@ -1621,7 +2016,7 @@ function App() {
 
 
         {/* --------------------------------------------------------------- */}
-        {/* System health                                                   */}
+        {/* System health                                                  */}
         {/* --------------------------------------------------------------- */}
 
         <section
@@ -1635,13 +2030,16 @@ function App() {
               </span>
 
               <h2>
-                SentinelVision services
+                SentinelVision
+                services
               </h2>
 
               <p>
-                The frontend continuously communicates
-                with the FastAPI service that powers
-                uploads and analysis.
+                The frontend
+                communicates with the
+                AWS API Gateway that
+                powers secure
+                serverless uploads.
               </p>
             </div>
 
@@ -1649,36 +2047,44 @@ function App() {
               <div className="system-service">
                 <div>
                   <strong>
-                    SentinelVision API
+                    AWS Upload API
                   </strong>
 
                   <span>
-                    FastAPI backend
+                    API Gateway +
+                    Lambda
                   </span>
                 </div>
 
                 <span
                   className={
-                    apiStatus === "healthy"
+                    apiStatus ===
+                    "healthy"
                       ? "service-status online"
                       : "service-status offline"
                   }
                 >
-                  {apiStatus}
+                  {
+                    apiStatus
+                  }
                 </span>
               </div>
 
               <button
                 type="button"
                 className="refresh-button"
-                onClick={checkApiHealth}
+                onClick={
+                  checkApiHealth
+                }
               >
                 Refresh status
               </button>
 
               {systemError && (
                 <p className="inline-error">
-                  {systemError}
+                  {
+                    systemError
+                  }
                 </p>
               )}
             </div>
@@ -1688,7 +2094,7 @@ function App() {
 
 
       {/* ----------------------------------------------------------------- */}
-      {/* Footer                                                            */}
+      {/* Footer                                                           */}
       {/* ----------------------------------------------------------------- */}
 
       <footer className="footer">
@@ -1699,7 +2105,8 @@ function App() {
             </strong>
 
             <p>
-              Visual data quality and
+              Serverless visual-data
+              ingestion and
               ML-readiness platform.
             </p>
           </div>
@@ -1710,7 +2117,7 @@ function App() {
             </a>
 
             <a href="#analyse">
-              Analyse
+              Upload
             </a>
 
             <a href="#datasets">
@@ -1729,4 +2136,3 @@ function App() {
 
 
 export default App;
-
